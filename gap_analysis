@@ -1,245 +1,263 @@
-# Sancus Engine — Exists vs Missing (Docs-Only)
+# Sancus — Three Rails Gap Analysis
 
+**Question:** On each of the three rails, what does the agent leverage that already exists, and what must be built?
 
+**Rails:** Gnani (voice) · Pine Labs (payments) · Delhivery (logistics)
 
-**Scope:** Pine Labs (payments) + Gnani (voice). Location is collected by the companion app through normal operating-system location — not a third vendor rail in this analysis.
+Grounded only in public docs reviewed for this project. If a line does not apply: **None**. No invented endpoints.
 
-**Repo status:** Empty project (`main` initialize commit only). No Sancus application code, integrations, or config exists yet.
+**Sources:** [Gnani docs index](https://docs.gnani.ai/llms.txt), [Speech-to-text realtime](https://docs.gnani.ai/api/STT/stt-websocket), [Trigger call](https://docs.gnani.ai/Platform/Trigger_Call.md), [Advanced speech settings](https://docs.gnani.ai/B02_Advanced_ASR.md), [Custom actions](https://docs.gnani.ai/D05_Custom.md), [Dynamic variables](https://docs.gnani.ai/B04_Dynamic_Variables.md); [Pine Labs one-time mandate](https://www.pinelabs.com/docs/online-payments/one-time-mandate), [integration steps](https://www.pinelabs.com/docs/online-payments/one-time-mandate/integration-steps), [payouts](https://www.pinelabs.com/docs/online-payments/api/payouts/create-payout); [Delhivery One logistics portal](https://one.delhivery.com/developer-portal/documents), [Delhivery Maps OpenAPI](https://www.delhivery.com/maps/openapi.json).
 
-**Sources checked (public docs only):**
-
-
-| Vendor    | URLs                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
-| --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Pine Labs | [Developer portal](https://www.pinelabs.com/docs), [UPI OTM](https://www.pinelabs.com/docs/online-payments/one-time-mandate), [OTM integration](https://www.pinelabs.com/docs/online-payments/one-time-mandate/integration-steps), [OTM FAQs](https://www.pinelabs.com/docs/online-payments/one-time-mandate/faqs), [Orders / card pre-auth](https://www.pinelabs.com/docs/online-payments/payment-lifecycle/orders), [Payouts](https://www.pinelabs.com/docs/online-payments/api/payouts), [Create Payout](https://www.pinelabs.com/docs/online-payments/api/payouts/create-payout) |
-| Gnani     | [STT REST](https://docs.gnani.ai/api/STT/speech-to-text), [STT WebSocket](https://docs.gnani.ai/api/STT/stt-websocket), [docs index](https://docs.gnani.ai/llms.txt), [Trigger Call](https://docs.gnani.ai/Platform/Trigger_Call.md), [Advanced ASR](https://docs.gnani.ai/B02_Advanced_ASR.md), [Custom integrations](https://docs.gnani.ai/D05_Custom.md), [Dynamic variables](https://docs.gnani.ai/B04_Dynamic_Variables.md)                                                                                                                                                     |
-
-
-Nothing below invents undocumented endpoints or behaviours.
+**Sancus policy notes:** Passphrase-only speech (binary match). Location is read by the companion app via normal OS permission. Delhivery rail: None.
 
 ---
 
 
 
-## Architecture claim → documented reality
+## Why “Sancus”
 
-```mermaid
-flowchart TD
-  subgraph trap [The Trap]
-    Schedule[User schedules commitment]
-    OTM[Pine Labs UPI OTM block]
-    Schedule --> OTM
-  end
-
-  subgraph audit [The Audit]
-    Call[Gnani Agent Builder outbound call 1A]
-    ASR[Agent Builder Advanced ASR]
-    Call --> ASR
-  end
-
-  subgraph proof [The Proof]
-    Phrase[Passphrase match from transcript]
-    GPS[Device location from companion app]
-  end
-
-  subgraph exec [The Execution]
-    Pass[Pass: release OTM block]
-    FailCapture[Fail: Presentation debit to merchant]
-    FailPay[Then Payout to peer VPA]
-    FailCapture --> FailPay
-  end
-
-  OTM --> Call
-  ASR --> Phrase
-  Phrase --> Pass
-  Phrase --> FailCapture
-  GPS --> Pass
-  GPS --> FailCapture
-```
-
-
+Sancus was the Roman god of trust, honesty, and oaths — specifically business contracts and binding agreements. Breaking the deal invited financial ruin. The agent applies that rule to scheduled commitments.
 
 ---
 
 
 
-## 1. The Trap (Pre-Auth / escrow)
+## Rail: Gnani (voice)
 
+Capability 1  
+Name: Outbound test call to a registered number  
+Used at: Optional phone-channel audit when the deadline arrives  
+Rail: Gnani  
+What you send it: Agent identity, phone number, country code, display name, optional client reference  
+What comes back: Acceptance that the call is being placed; later conversation logs or post-call hooks  
+When it fails: Number not registered for outbound calls; missing environment; invalid phone; misconfigured pre-call or greeting hooks  
+What it must never do: Treat a successful trigger as proof the user complied; assume self-serve production dialing for arbitrary users without Gnani enablement  
+What exists today: `POST /v1/agents/{botId}/trigger_call` with whitelist rules; docs describe a test-oriented flow  
+Build Status (Exists/Must Build): Exists
 
+Capability 2  
+Name: Dynamic greeting and pre-call variables  
+Used at: Injecting the day’s passphrase and task context before the session speaks  
+Rail: Gnani  
+What you send it: Backend returns greeting text plus key–value context for the callee  
+What comes back: Agent uses that injected context for the session  
+When it fails: Hook times out (~10 seconds documented) or returns a bad status — call may not start  
+What it must never do: Invent the passphrase without your source of truth  
+What exists today: Dynamic Messages and pre-call variables in Agent Builder docs  
+Build Status (Exists/Must Build): Exists
 
-### Exists in Pine Labs docs
+Capability 3  
+Name: Advanced listening timeouts and noise filtering  
+Used at: Silence detection, turn end, noisy rooms during passphrase capture  
+Rail: Gnani  
+What you send it: Configured limits (initial silence, end silence, max speech, background noise filtering)  
+What comes back: Turn end / cancelled input behaviour according to those limits  
+When it fails: Limits too short drop real answers; limits too long let idle users stall  
+What it must never do: Claim bed-versus-gym or muffled-speech classification (not documented)  
+What exists today: Advanced speech recognition settings in Agent Builder  
+Build Status (Exists/Must Build): Exists
 
+Capability 4  
+Name: Custom on-call and post-call HTTP actions  
+Used at: Notifying our orchestrator of pass, fail, silence, or disconnect so payments can run  
+Rail: Gnani  
+What you send it: Integration URL, method, headers, body fields, trigger timing  
+What comes back: Your server’s response; action logs in the console  
+When it fails: Timeout or HTTP error — financial step must not assume success  
+What it must never do: Debit funds inside Gnani; Gnani only signals our backend  
+What exists today: Custom integrations and actions documentation  
+Build Status (Exists/Must Build): Exists
 
-| Capability                     | What docs say                                                                                                                                                                                                                                     |
-| ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **UPI One-Time Mandate (OTM)** | Blocks funds in the customer’s bank account until capture or release. Validity up to 60 days; default cap up to ₹1 lakh (confirm with Pine Labs). Customer cannot revoke from TPAP app; merchant must release.                                    |
-| **OTM integration path**       | Auth token → create customer → create OT direct-execution subscription (`plan_details.frequency` OT) → Payments API with `mandate_info.request_type: CREATE_MANDATE` (UPI INTENT) → wait until subscription `ACTIVE` → Presentation API to debit. |
-| **Card Pre-Auth**              | Separate Orders `pre_auth` path. **Cards and PayByPoints only — not UPI.** Do not use this for the UPI ₹500 lock.                                                                                                                                 |
+Capability 5  
+Name: Realtime speech-to-text over a lasting socket  
+Used at: In-app microphone path — stream audio and receive transcript segments for passphrase match  
+Rail: Gnani  
+What you send it: Raw mono pulse-code audio frames at a steady pace; headers for language, sample rate, optional voice-activity tuning  
+What comes back: Connected, processing, and transcript events with text and timing  
+When it fails: Bad audio format, rate limits, server errors; bursting frames harms activity detection  
+What it must never do: Place a phone call by itself — this interface has no telephony  
+What exists today: `wss://api.vachana.ai/stt/v3/stream` with documented voice-activity headers  
+Build Status (Exists/Must Build): Exists
 
+Capability 6  
+Name: Conversation logs, stats, and post-call outcome read  
+Used at: After a session — confirm disconnect, transcript, disposition for forfeiture vs pass  
+Rail: Gnani  
+What you send it: Conversation identity (from logs) or rely on post-call webhook payload  
+What comes back: Outcome fields, transcript, audio where enabled  
+When it fails: Missing conversation id; delayed webhook  
+What it must never do: Skip idempotent handling of duplicate outcome events  
+What exists today: Platform conversation logs / stats / audio endpoints documented in the docs index  
+Build Status (Exists/Must Build): Exists
 
+Capability 7  
+Name: In-app live video session with speaking avatar and subtitles  
+Used at: Primary L4 audit interface  
+Rail: Gnani  
+What you send it: None to Gnani for this surface — our client owns the session  
+What comes back: None  
+When it fails: Camera or network denied  
+What it must never do: Be described as a documented Gnani Agent Builder product feature — public docs cover phone and browser voice tests, not a productized WebRTC avatar product  
+What exists today: None in the reviewed Gnani Agent Builder / Speech docs for this exact surface  
+Build Status (Exists/Must Build): Must Build
 
+Capability 8  
+Name: Passphrase-only matcher (any segment; no free chat)  
+Used at: Every audit — binary match of the issued passphrase; ban open dialogue to block prompt injection  
+Rail: Gnani  
+What you send it: Transcript segments from Gnani speech products  
+What comes back: None from Gnani beyond text — match logic is ours  
+When it fails: Empty transcript; non-phrase speech → strike / fail per state machine  
+What it must never do: Run an empathetic conversational agent over Gnani transcripts  
+What exists today: Transcript text exists from Gnani; **matcher and no-chat policy are ours**  
+Build Status (Exists/Must Build): Must Build
 
-### Missing / gaps
+Capability 9  
+Name: Vision plan — frame sampling, front/rear cameras, scene and before-after rules  
+Used at: Presence scene assist; Transformation baseline and final delta; anti-cheat challenges  
+Rail: Gnani  
+What you send it: None to Gnani — frames go to our vision model  
+What comes back: None from Gnani  
+When it fails: Dark room, covered camera, refused pan, no face on front camera  
+What it must never do: Be attributed to Gnani speech products  
+What exists today: None in reviewed Gnani docs  
+Build Status (Exists/Must Build): Must Build
 
+Capability 10  
+Name: Acoustic confidence / muffled-speech auto-escalation to typed passphrase  
+Used at: Switching from spoken phrase to typed phrase when speech is unsafe  
+Rail: Gnani  
+What you send it: None documented as a published “below 70% confidence” field on Agent Builder turns  
+What comes back: Transcripts and silence behaviour; not a documented per-utterance confidence score for this rule  
+When it fails: None  
+What it must never do: Claim Gnani returns a published gym-music or bed-speech confidence score for this policy  
+What exists today: Silence timeouts and noise filtering exist; the specified confidence/muffle classifier does not  
+Build Status (Exists/Must Build): Must Build
 
-| Gap                                       | Detail                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
-| ----------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **OTM must be enabled**                   | Docs require account manager enablement, MCC, limits, webhooks.                                                                                                                                                                                                                                                                                                                                                                                                               |
-| **Concrete “release / void mandate” API** | Product FAQs say the merchant can release the block. The public OTM **Integration Steps** page documents create → mandate → presentation, but **does not publish a release request schema / endpoint** (no `RELEASE_MANDATE` example found). Cancel-subscription exists for subscriptions generally; docs do **not** state that cancel = OTM fund-block release. **Pass path (“void mandate”) cannot be implemented from public steps alone — needs Pine Labs confirmation.** |
-| **Escrow ≠ merchant wallet**              | Blocked money stays in the **customer’s** bank until Presentation capture. It is not held in a Sancus escrow account.                                                                                                                                                                                                                                                                                                                                                         |
-| **Your app**                              | Commitment scheduling UI, penalty peer selection, storing `subscription_id` / mandate state — not in vendor docs; must be built.                                                                                                                                                                                                                                                                                                                                              |
-
+Capability 11  
+Name: Production scheduled outbound at an exact clock time for arbitrary users  
+Used at: Six o’clock audits at scale  
+Rail: Gnani  
+What you send it: Would need campaign or scheduler enablement beyond the public test trigger  
+What comes back: None self-serve in public docs  
+When it fails: Whitelist and test-only constraints  
+What it must never do: Assume `trigger_call` alone is a production dialer  
+What exists today: Test trigger plus note that campaign management is enabled by contacting Gnani  
+Build Status (Exists/Must Build): Must Build
 
 ---
 
 
 
-## 2. The Audit (Telephony & voice) — path **1A** (primary)
+## Rail: Pine Labs (payments)
 
+Capability 12  
+Name: Access token for server calls  
+Used at: Before every payments call  
+Rail: Pine Labs  
+What you send it: Client identity, secret, client-credentials grant  
+What comes back: Bearer token  
+When it fails: Bad credentials or expired token  
+What it must never do: Ship secrets in the mobile app or browser  
+What exists today: Authentication token endpoint in online payments docs  
+Build Status (Exists/Must Build): Exists
 
+Capability 13  
+Name: Create customer profile  
+Used at: First time a user binds payments  
+Rail: Pine Labs  
+What you send it: Merchant customer reference, name, mobile, email  
+What comes back: Customer identity for later subscriptions  
+When it fails: Validation errors  
+What it must never do: Create uncontrolled duplicate references  
+What exists today: Customer create API in one-time mandate integration steps  
+Build Status (Exists/Must Build): Exists
 
-### Exists in Gnani docs (Agent Builder)
+Capability 14  
+Name: One-time direct subscription and mandate registration (fund block)  
+Used at: Commitment setup — after the safety filter passes — block the penalty amount in the user’s bank  
+Rail: Pine Labs  
+What you send it: One-time plan amount and validity; then payment with mandate create over UPI intent  
+What comes back: Subscription and order identities; later active status after user authorizes in their payments app  
+When it fails: User refuses pin; amount mismatch; presentation before active  
+What it must never do: Treat “created” as funds already locked — wait for active; never lock funds for a goal rejected by the safety filter  
+What exists today: One-time mandate product and integration steps (create subscription, create mandate, wait for active)  
+Build Status (Exists/Must Build): Exists
 
+Capability 15  
+Name: Presentation debit against an active one-time mandate  
+Used at: Unhappy path — take the blocked amount into merchant settlement  
+Rail: Pine Labs  
+What you send it: Active subscription identity and amount within the ceiling  
+What comes back: Presentation identity and status; webhooks for charged or failed  
+When it fails: Subscription not active; amount above ceiling; duplicate presentation reference  
+What it must never do: Send money directly to the peer in this step — debit lands with the merchant  
+What exists today: Presentation create and fetch in one-time mandate integration steps  
+Build Status (Exists/Must Build): Exists
 
-| Capability                               | What docs say                                                                                                                                                          |
-| ---------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Outbound call API**                    | `POST /v1/agents/{botId}/trigger_call` with `phone`, `countryCode`, `name`, optional `clientReferenceId`.                                                              |
-| **Silence / listen controls**            | Advanced ASR: Initial Silence Timeout, End Silence Timeout, Max Speech Duration, Background Noise Filtering. Useful for “no speech / ignore call” style fail signals.  |
-| **Passphrase check (application-level)** | Agent can collect spoken phrase; transcript available via conversation stats / post-call webhook. Custom HTTP actions (on-call / post-call) can call **your** backend. |
-| **Personalization**                      | Dynamic Messages / pre-call variables can inject passphrase, commitment id, etc. into greeting/prompt (your API returns them).                                         |
+Capability 16  
+Name: Payout to a beneficiary UPI address or bank account  
+Used at: After a successful debit — pay the designated peer  
+Rail: Pine Labs  
+What you send it: Client reference, payee name, amount, mode (including UPI), remarks; VPA or account details per mode  
+What comes back: Payment reference and status (may be scheduled)  
+When it fails: Auth, validation, conflict, or processing failure  
+What it must never do: Be described as an atomic “user bank to peer” escrow hop — funds leave the merchant payout balance  
+What exists today: Create payout bank transfer API  
+Build Status (Exists/Must Build): Exists
 
+Capability 17  
+Name: Programmatic release of an active one-time fund block without capture  
+Used at: Happy path — void the block when the user passes  
+Rail: Pine Labs  
+What you send it: Unknown — no public release request schema in the one-time mandate integration steps reviewed  
+What comes back: None documented for that exact operation  
+When it fails: None  
+What it must never do: Assume cancel-subscription equals mandate release without Pine Labs confirmation  
+What exists today: Product text says merchants can release; public integration steps do not publish a release endpoint schema  
+Build Status (Exists/Must Build): Must Build
 
+Capability 18  
+Name: Orchestration that chains debit then payout as one business forfeiture  
+Used at: Every fail path  
+Rail: Pine Labs  
+What you send it: Ordered calls to presentation then payout, with idempotency keys  
+What comes back: Two separate statuses to reconcile  
+When it fails: Debit succeeds and payout fails — money sits with merchant until retry  
+What it must never do: Hide the two-hop nature from operators or judges  
+What exists today: Separate presentation and payout products; no single “forfeit to peer” API  
+Build Status (Exists/Must Build): Must Build
 
-
-### Missing / gaps (1A)
-
-
-| Gap                                     | Detail                                                                                                                                                                                                                                                                                                  |
-| --------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Production outbound**                 | Trigger Call docs state the endpoint is **for testing**, numbers must be **whitelisted**, and Dynamic Variables docs say **no built-in campaign manager** — production campaign enablement is **by contacting Gnani**. Scheduling “exact 6:00 AM” for arbitrary users is not self-serve in public docs. |
-| **Not a sensory polygraph**             | Advanced ASR does **not** document “awake vs in bed,” gym ambient audio, or muffled-speech environment classification. You can detect silence / no answer / missing passphrase — not bed-vs-gym acoustics.                                                                                              |
-| **Voice biometrics**                    | Marketing / Android SDK pages exist for Gnani biometrics products. They are **not** in the Speech API / Agent Builder docs index you linked. Treat speaker verification as **out of documented 1A scope** unless Gnani provides separate API access.                                                    |
-| **Does not use Speech API VAD headers** | Agent Builder ASR ≠ `wss://api.vachana.ai/stt/v3/stream`. `x-vad-threshold` **and related headers apply only to the Speech API WebSocket (1B).**                                                                                                                                                        |
-
-
-
-
-### Fallback **1B** (Speech API STT WebSocket) — exists but incomplete alone
-
-
-| Exists                                                                                            | Missing                                                                                                                                                                                                                              |
-| ------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `WSS wss://api.vachana.ai/stt/v3/stream`, PCM frames, `x-vad-threshold`, `x-min-silence-ms`, etc. | **No telephony.** You must supply mono PCM. No documented bridge from Agent Builder call audio → this WebSocket. Using 1B for live calls requires a **telephony audio source** not provided by Pine Labs or Gnani Speech APIs alone. |
-
-
-**Decision for Sancus:** Build audit on **1A**. Keep 1B only if you later get raw call audio or a non-call channel (app mic).
-
----
-
-
-
-## 3. The Proof (Validation)
-
-
-
-### Passphrase
-
-
-| Exists                                                                                  | Missing                                                         |
-| --------------------------------------------------------------------------------------- | --------------------------------------------------------------- |
-| Transcription via Agent Builder (1A) or STT (1B); your code compares to expected phrase | Fuzzy match rules, retries, passphrase-only policy — your logic |
-
-
-
-
-### Location — companion app (ordinary device location)
-
-Neither Pine Labs nor Gnani provides device geolocation.
-
-
-| Piece                                                        | Status                                                                             |
-| ------------------------------------------------------------ | ---------------------------------------------------------------------------------- |
-| Read phone location with OS permission                       | **Must build** in the companion client                                             |
-| Store destination coordinates at commitment setup            | **Must build** (user-entered place → your stored lat/lng, however you obtain them) |
-| Compare live coordinates to destination (distance threshold) | **Must build** on your backend                                                     |
-| Location from the phone call itself                          | **Does not exist** in Gnani call APIs                                              |
-
-
-**Minimal location design:**
-
-1. On schedule: store destination coordinates with the commitment.
-2. On audit: companion app posts current `lat`/`lng` → backend proximity check against your threshold.
-3. Fail if permission denied, mock location rejected, or telemetry missing in time.
-
----
-
-
-
-## 4. The Execution (Consequence or Release)
-
-
-
-### Exists in Pine Labs docs
-
-
-| Flow                     | Documented mechanism                                                                                                                                                                                                                               |
-| ------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Fail — take the ₹500** | OTM **Presentation** API debits the blocked amount **to the merchant** (after subscription `ACTIVE`). No second UPI PIN.                                                                                                                           |
-| **Fail — pay the peer**  | **Payouts API** `POST /payouts/v3/payments/banks` — pay beneficiary via `UPI` / `IMPS` / `NEFT` / `RTGS` (UPI uses VPA per docs). Money comes from the **merchant payout / funding account**, not as a direct bank-to-peer hop from the OTM block. |
-| **Pass — don’t charge**  | Product intent: **release** the OTM block (see Trap gap — public release API incomplete).                                                                                                                                                          |
-
-
-
-
-### Missing / gaps
-
-
-| Gap                                | Detail                                                                                                                                                                                                      |
-| ---------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Not one “route OTM → peer” API** | Documented unhappy path is **two steps**: Presentation (user → merchant) **then** Payout (merchant → peer). Not atomic; not “instant irreversible” in one call. Create Payout responses can be `SCHEDULED`. |
-| **Merchant float**                 | Payout requires funded merchant payout capacity. If Presentation succeeds but Payout fails, money sits with merchant — your reconciliation needed.                                                          |
-| **Pass release API**               | Still blocked on Pine Labs documenting/confirming release for OT-direct subscriptions.                                                                                                                      |
-| **Social shame / survey claims**   | Product/messaging only; no vendor API.                                                                                                                                                                      |
-
+Capability 19  
+Name: Pass-path do-not-present hold until mandate expiry  
+Used at: When release API is unavailable but audit passed  
+Rail: Pine Labs  
+What you send it: None to Pine Labs beyond not calling presentation  
+What comes back: None  
+When it fails: Operator error presents by mistake  
+What it must never do: Capture after a recorded pass  
+What exists today: Operational policy only — not a documented Pine Labs “do not present” API  
+Build Status (Exists/Must Build): Must Build
 
 ---
 
 
 
-## 5. What you must build (not in any vendor)
+## Rail: Delhivery (logistics)
 
-These are required for Sancus and are **entirely missing** from the empty repo and from vendor “do it for you” products:
-
-1. **Backend orchestrator** — commitments, schedule job at commitment time, call Gnani `trigger_call`, receive webhooks/actions, decide pass/fail, call Pine Labs.
-2. **User / peer data model** — phone, peer VPA, destination coords, passphrase, Pine Labs `customer_id` / `subscription_id`.
-3. **Companion client for location** — ordinary OS location permission and post to backend near audit time.
-4. **Passphrase + location policy** — thresholds, timeouts, no-answer = fail, etc.
-5. **Webhook hardening** — Pine Labs OTM webhooks; Gnani post-call / custom action callbacks.
-6. **Secrets & onboarding** — Pine Labs OTM + Payouts enabled; Gnani Agent + outbound/whitelist/campaign.
+No capabilities of Delhivery utilised. 
 
 ---
 
 
 
-## 6. Scorecard (honest)
+## Summary
 
 
-| Architecture piece             | Vendor docs support?                                   | Usable with Gnani 1A + Pine Labs?                   |
-| ------------------------------ | ------------------------------------------------------ | --------------------------------------------------- |
-| Lock ₹500 via UPI mandate      | Yes — OTM                                              | Yes, after enablement                               |
-| Void / release on pass         | Claimed; **API not in public OTM steps**               | **Blocked until Pine Labs confirms**                |
-| Debit on fail                  | Yes — Presentation                                     | Yes                                                 |
-| Pay peer on fail               | Yes — Payouts (merchant → peer)                        | Yes, as **second** step                             |
-| Outbound call at schedule time | Partial — test `trigger_call`; prod campaign via Gnani | **Needs Gnani enablement**                          |
-| STT / silence signals          | Yes — Agent ASR (1A); VAD headers (1B only)            | Yes for phrase + silence; **not** bed/gym polygraph |
-| Voice biometrics               | Not in linked Speech/Agent docs                        | Treat as missing                                    |
-| Device location acquire        | **No vendor**                                          | **Your companion app**                              |
-| Location verify vs destination | **Your backend**                                       | Yes, once app sends GPS                             |
+| Rail      | Exists and callable                                                                                                  | Must build                                                                                                                                        |
+| --------- | -------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Gnani     | Call trigger, dynamic variables, listen timeouts, custom actions, realtime speech socket, conversation outcome reads | In-app video avatar session, passphrase-only matcher policy, vision plans, confidence/muffle escalation as specified, production campaign dialing |
+| Pine Labs | Token, customer, one-time fund block, presentation debit, payout to peer                                             | Publicly documented mandate release; two-hop forfeiture orchestrator; do-not-present pass hold                                                    |
+| Delhivery | None                                                                                                                 | None                                                                                                                                              |
 
-
----
-
-\
-
----
 
