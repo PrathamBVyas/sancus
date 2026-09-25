@@ -1,0 +1,245 @@
+# Sancus Engine — Exists vs Missing (Docs-Only)
+
+
+
+**Scope:** Pine Labs (payments) + Gnani (voice). Location is collected by the companion app through normal operating-system location — not a third vendor rail in this analysis.
+
+**Repo status:** Empty project (`main` initialize commit only). No Sancus application code, integrations, or config exists yet.
+
+**Sources checked (public docs only):**
+
+
+| Vendor    | URLs                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Pine Labs | [Developer portal](https://www.pinelabs.com/docs), [UPI OTM](https://www.pinelabs.com/docs/online-payments/one-time-mandate), [OTM integration](https://www.pinelabs.com/docs/online-payments/one-time-mandate/integration-steps), [OTM FAQs](https://www.pinelabs.com/docs/online-payments/one-time-mandate/faqs), [Orders / card pre-auth](https://www.pinelabs.com/docs/online-payments/payment-lifecycle/orders), [Payouts](https://www.pinelabs.com/docs/online-payments/api/payouts), [Create Payout](https://www.pinelabs.com/docs/online-payments/api/payouts/create-payout) |
+| Gnani     | [STT REST](https://docs.gnani.ai/api/STT/speech-to-text), [STT WebSocket](https://docs.gnani.ai/api/STT/stt-websocket), [docs index](https://docs.gnani.ai/llms.txt), [Trigger Call](https://docs.gnani.ai/Platform/Trigger_Call.md), [Advanced ASR](https://docs.gnani.ai/B02_Advanced_ASR.md), [Custom integrations](https://docs.gnani.ai/D05_Custom.md), [Dynamic variables](https://docs.gnani.ai/B04_Dynamic_Variables.md)                                                                                                                                                     |
+
+
+Nothing below invents undocumented endpoints or behaviours.
+
+---
+
+
+
+## Architecture claim → documented reality
+
+```mermaid
+flowchart TD
+  subgraph trap [The Trap]
+    Schedule[User schedules commitment]
+    OTM[Pine Labs UPI OTM block]
+    Schedule --> OTM
+  end
+
+  subgraph audit [The Audit]
+    Call[Gnani Agent Builder outbound call 1A]
+    ASR[Agent Builder Advanced ASR]
+    Call --> ASR
+  end
+
+  subgraph proof [The Proof]
+    Phrase[Passphrase match from transcript]
+    GPS[Device location from companion app]
+  end
+
+  subgraph exec [The Execution]
+    Pass[Pass: release OTM block]
+    FailCapture[Fail: Presentation debit to merchant]
+    FailPay[Then Payout to peer VPA]
+    FailCapture --> FailPay
+  end
+
+  OTM --> Call
+  ASR --> Phrase
+  Phrase --> Pass
+  Phrase --> FailCapture
+  GPS --> Pass
+  GPS --> FailCapture
+```
+
+
+
+---
+
+
+
+## 1. The Trap (Pre-Auth / escrow)
+
+
+
+### Exists in Pine Labs docs
+
+
+| Capability                     | What docs say                                                                                                                                                                                                                                     |
+| ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **UPI One-Time Mandate (OTM)** | Blocks funds in the customer’s bank account until capture or release. Validity up to 60 days; default cap up to ₹1 lakh (confirm with Pine Labs). Customer cannot revoke from TPAP app; merchant must release.                                    |
+| **OTM integration path**       | Auth token → create customer → create OT direct-execution subscription (`plan_details.frequency` OT) → Payments API with `mandate_info.request_type: CREATE_MANDATE` (UPI INTENT) → wait until subscription `ACTIVE` → Presentation API to debit. |
+| **Card Pre-Auth**              | Separate Orders `pre_auth` path. **Cards and PayByPoints only — not UPI.** Do not use this for the UPI ₹500 lock.                                                                                                                                 |
+
+
+
+
+### Missing / gaps
+
+
+| Gap                                       | Detail                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| ----------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **OTM must be enabled**                   | Docs require account manager enablement, MCC, limits, webhooks.                                                                                                                                                                                                                                                                                                                                                                                                               |
+| **Concrete “release / void mandate” API** | Product FAQs say the merchant can release the block. The public OTM **Integration Steps** page documents create → mandate → presentation, but **does not publish a release request schema / endpoint** (no `RELEASE_MANDATE` example found). Cancel-subscription exists for subscriptions generally; docs do **not** state that cancel = OTM fund-block release. **Pass path (“void mandate”) cannot be implemented from public steps alone — needs Pine Labs confirmation.** |
+| **Escrow ≠ merchant wallet**              | Blocked money stays in the **customer’s** bank until Presentation capture. It is not held in a Sancus escrow account.                                                                                                                                                                                                                                                                                                                                                         |
+| **Your app**                              | Commitment scheduling UI, penalty peer selection, storing `subscription_id` / mandate state — not in vendor docs; must be built.                                                                                                                                                                                                                                                                                                                                              |
+
+
+---
+
+
+
+## 2. The Audit (Telephony & voice) — path **1A** (primary)
+
+
+
+### Exists in Gnani docs (Agent Builder)
+
+
+| Capability                               | What docs say                                                                                                                                                          |
+| ---------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Outbound call API**                    | `POST /v1/agents/{botId}/trigger_call` with `phone`, `countryCode`, `name`, optional `clientReferenceId`.                                                              |
+| **Silence / listen controls**            | Advanced ASR: Initial Silence Timeout, End Silence Timeout, Max Speech Duration, Background Noise Filtering. Useful for “no speech / ignore call” style fail signals.  |
+| **Passphrase check (application-level)** | Agent can collect spoken phrase; transcript available via conversation stats / post-call webhook. Custom HTTP actions (on-call / post-call) can call **your** backend. |
+| **Personalization**                      | Dynamic Messages / pre-call variables can inject passphrase, commitment id, etc. into greeting/prompt (your API returns them).                                         |
+
+
+
+
+### Missing / gaps (1A)
+
+
+| Gap                                     | Detail                                                                                                                                                                                                                                                                                                  |
+| --------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Production outbound**                 | Trigger Call docs state the endpoint is **for testing**, numbers must be **whitelisted**, and Dynamic Variables docs say **no built-in campaign manager** — production campaign enablement is **by contacting Gnani**. Scheduling “exact 6:00 AM” for arbitrary users is not self-serve in public docs. |
+| **Not a sensory polygraph**             | Advanced ASR does **not** document “awake vs in bed,” gym ambient audio, or muffled-speech environment classification. You can detect silence / no answer / missing passphrase — not bed-vs-gym acoustics.                                                                                              |
+| **Voice biometrics**                    | Marketing / Android SDK pages exist for Gnani biometrics products. They are **not** in the Speech API / Agent Builder docs index you linked. Treat speaker verification as **out of documented 1A scope** unless Gnani provides separate API access.                                                    |
+| **Does not use Speech API VAD headers** | Agent Builder ASR ≠ `wss://api.vachana.ai/stt/v3/stream`. `x-vad-threshold` **and related headers apply only to the Speech API WebSocket (1B).**                                                                                                                                                        |
+
+
+
+
+### Fallback **1B** (Speech API STT WebSocket) — exists but incomplete alone
+
+
+| Exists                                                                                            | Missing                                                                                                                                                                                                                              |
+| ------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `WSS wss://api.vachana.ai/stt/v3/stream`, PCM frames, `x-vad-threshold`, `x-min-silence-ms`, etc. | **No telephony.** You must supply mono PCM. No documented bridge from Agent Builder call audio → this WebSocket. Using 1B for live calls requires a **telephony audio source** not provided by Pine Labs or Gnani Speech APIs alone. |
+
+
+**Decision for Sancus:** Build audit on **1A**. Keep 1B only if you later get raw call audio or a non-call channel (app mic).
+
+---
+
+
+
+## 3. The Proof (Validation)
+
+
+
+### Passphrase
+
+
+| Exists                                                                                  | Missing                                                         |
+| --------------------------------------------------------------------------------------- | --------------------------------------------------------------- |
+| Transcription via Agent Builder (1A) or STT (1B); your code compares to expected phrase | Fuzzy match rules, retries, passphrase-only policy — your logic |
+
+
+
+
+### Location — companion app (ordinary device location)
+
+Neither Pine Labs nor Gnani provides device geolocation.
+
+
+| Piece                                                        | Status                                                                             |
+| ------------------------------------------------------------ | ---------------------------------------------------------------------------------- |
+| Read phone location with OS permission                       | **Must build** in the companion client                                             |
+| Store destination coordinates at commitment setup            | **Must build** (user-entered place → your stored lat/lng, however you obtain them) |
+| Compare live coordinates to destination (distance threshold) | **Must build** on your backend                                                     |
+| Location from the phone call itself                          | **Does not exist** in Gnani call APIs                                              |
+
+
+**Minimal location design:**
+
+1. On schedule: store destination coordinates with the commitment.
+2. On audit: companion app posts current `lat`/`lng` → backend proximity check against your threshold.
+3. Fail if permission denied, mock location rejected, or telemetry missing in time.
+
+---
+
+
+
+## 4. The Execution (Consequence or Release)
+
+
+
+### Exists in Pine Labs docs
+
+
+| Flow                     | Documented mechanism                                                                                                                                                                                                                               |
+| ------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Fail — take the ₹500** | OTM **Presentation** API debits the blocked amount **to the merchant** (after subscription `ACTIVE`). No second UPI PIN.                                                                                                                           |
+| **Fail — pay the peer**  | **Payouts API** `POST /payouts/v3/payments/banks` — pay beneficiary via `UPI` / `IMPS` / `NEFT` / `RTGS` (UPI uses VPA per docs). Money comes from the **merchant payout / funding account**, not as a direct bank-to-peer hop from the OTM block. |
+| **Pass — don’t charge**  | Product intent: **release** the OTM block (see Trap gap — public release API incomplete).                                                                                                                                                          |
+
+
+
+
+### Missing / gaps
+
+
+| Gap                                | Detail                                                                                                                                                                                                      |
+| ---------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Not one “route OTM → peer” API** | Documented unhappy path is **two steps**: Presentation (user → merchant) **then** Payout (merchant → peer). Not atomic; not “instant irreversible” in one call. Create Payout responses can be `SCHEDULED`. |
+| **Merchant float**                 | Payout requires funded merchant payout capacity. If Presentation succeeds but Payout fails, money sits with merchant — your reconciliation needed.                                                          |
+| **Pass release API**               | Still blocked on Pine Labs documenting/confirming release for OT-direct subscriptions.                                                                                                                      |
+| **Social shame / survey claims**   | Product/messaging only; no vendor API.                                                                                                                                                                      |
+
+
+---
+
+
+
+## 5. What you must build (not in any vendor)
+
+These are required for Sancus and are **entirely missing** from the empty repo and from vendor “do it for you” products:
+
+1. **Backend orchestrator** — commitments, schedule job at commitment time, call Gnani `trigger_call`, receive webhooks/actions, decide pass/fail, call Pine Labs.
+2. **User / peer data model** — phone, peer VPA, destination coords, passphrase, Pine Labs `customer_id` / `subscription_id`.
+3. **Companion client for location** — ordinary OS location permission and post to backend near audit time.
+4. **Passphrase + location policy** — thresholds, timeouts, no-answer = fail, etc.
+5. **Webhook hardening** — Pine Labs OTM webhooks; Gnani post-call / custom action callbacks.
+6. **Secrets & onboarding** — Pine Labs OTM + Payouts enabled; Gnani Agent + outbound/whitelist/campaign.
+
+---
+
+
+
+## 6. Scorecard (honest)
+
+
+| Architecture piece             | Vendor docs support?                                   | Usable with Gnani 1A + Pine Labs?                   |
+| ------------------------------ | ------------------------------------------------------ | --------------------------------------------------- |
+| Lock ₹500 via UPI mandate      | Yes — OTM                                              | Yes, after enablement                               |
+| Void / release on pass         | Claimed; **API not in public OTM steps**               | **Blocked until Pine Labs confirms**                |
+| Debit on fail                  | Yes — Presentation                                     | Yes                                                 |
+| Pay peer on fail               | Yes — Payouts (merchant → peer)                        | Yes, as **second** step                             |
+| Outbound call at schedule time | Partial — test `trigger_call`; prod campaign via Gnani | **Needs Gnani enablement**                          |
+| STT / silence signals          | Yes — Agent ASR (1A); VAD headers (1B only)            | Yes for phrase + silence; **not** bed/gym polygraph |
+| Voice biometrics               | Not in linked Speech/Agent docs                        | Treat as missing                                    |
+| Device location acquire        | **No vendor**                                          | **Your companion app**                              |
+| Location verify vs destination | **Your backend**                                       | Yes, once app sends GPS                             |
+
+
+---
+
+\
+
+---
+
